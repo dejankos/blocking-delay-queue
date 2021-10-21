@@ -6,8 +6,8 @@ pub trait Delayed {
 }
 
 pub struct DelayItem<T> {
-    data: T,
-    delay: Instant,
+    pub data: T,
+    pub delay: Instant,
 }
 
 impl<T> Ord for DelayItem<T> {
