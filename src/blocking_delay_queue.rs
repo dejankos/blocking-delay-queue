@@ -1,4 +1,4 @@
-use std::borrow::Borrow;
+
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::sync::{Condvar, Mutex, MutexGuard};
@@ -15,8 +15,6 @@ trait DelayQueue<T>
     fn add(&self, e: T);
 
     fn offer(&self, e: T, timeout: Duration) -> bool;
-
-    fn peek(&self) -> Option<&T>;
 
     fn take(&self) -> T;
 
@@ -110,12 +108,6 @@ impl<T> DelayQueue<T> for BlockingDelayQueue<T>
         }
     }
 
-    fn peek(&self) -> Option<&T> {
-        let option = self.peeker();
-        None
-    }
-
-
     fn take(&self) -> T {
         todo!()
     }
@@ -139,9 +131,9 @@ impl<T> DelayQueue<T> for BlockingDelayQueue<T>
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::thread;
-    use std::time::{Duration, Instant};
+    
+    
+    use std::time::{Instant};
 
     use crate::blocking_delay_queue::{BlockingDelayQueue, DelayQueue};
     use crate::delay_item::DelayItem;
