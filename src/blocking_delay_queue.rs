@@ -2,30 +2,12 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::sync::{Condvar, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::delay_item::Delayed;
 
 type MinHeap<T> = BinaryHeap<Reverse<T>>;
 
-
-trait DelayQueue<T>
-    where T: Delayed
-{
-    fn add(&self, e: T);
-
-    fn offer(&self, e: T, timeout: Duration) -> bool;
-
-    fn take(&self) -> T;
-
-    fn poll(&self, timeout: Duration) -> Option<T>;
-
-    fn remove(&self, e: T) -> bool;
-
-    fn size(&self) -> usize;
-
-    fn clear(&self);
-}
 
 pub struct BlockingDelayQueue<T>
 {
@@ -65,11 +47,7 @@ impl<T> BlockingDelayQueue<T>
             m.len() < m.capacity()
         }
     }
-}
 
-impl<T> DelayQueue<T> for BlockingDelayQueue<T>
-    where T: Delayed + Ord
-{
     fn add(&self, e: T) {
         let mut heap = self.heap_mutex();
         if Self::can_accept_element(&heap) {
@@ -83,6 +61,7 @@ impl<T> DelayQueue<T> for BlockingDelayQueue<T>
             mutex.push(Reverse(e));
         }
 
+        println!("added element");
         self.condvar.notify_one()
     }
 
@@ -109,7 +88,10 @@ impl<T> DelayQueue<T> for BlockingDelayQueue<T>
     }
 
     fn take(&self) -> T {
-        todo!()
+        let item = self.take_inner();
+        self.condvar.notify_one();
+
+        item
     }
 
     fn poll(&self, _timeout: Duration) -> Option<T> {
@@ -127,24 +109,88 @@ impl<T> DelayQueue<T> for BlockingDelayQueue<T>
     fn clear(&self) {
         self.heap_mutex().clear();
     }
+
+    fn take_inner(&self) -> T {
+        let heap = self.heap_mutex();
+        let current_time = Instant::now();
+
+        let condition = |heap: &mut MinHeap<T>| {
+            heap.peek()
+                .map_or(true, |item| {
+                    println!("eval {}", item.0.delay() >= current_time);
+                    !(item.0.delay() >= current_time)
+                } )
+        };
+
+        if let Some(item) = heap.peek() {
+            if Self::is_expired(&item.0) {
+                Self::pop(heap)
+            } else {
+                let delay = item.0.delay() - current_time;
+                let (heap, cond) = self
+                // let heap = self
+                    .condvar
+                    .wait_timeout_while(heap, delay, condition)
+                    // .wait_while(heap, condition)
+                    .expect("Queue lock poisoned");
+
+                println!("wait timeout res = {:?}", cond.timed_out());
+                Self::pop(heap)
+            }
+        } else {
+            let guard = self
+                .condvar
+                .wait_while(heap, condition)
+                .expect("Queue lock poisoned");
+            Self::pop(guard)
+        }
+    }
+
+    fn pop(mut mutex: MutexGuard<MinHeap<T>>) -> T {
+        mutex.pop().unwrap().0
+    }
+
+    fn is_expired(e: &T) -> bool {
+        e.delay() <= Instant::now()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    
-    
-    use std::time::{Instant};
+    use std::sync::Arc;
+    use std::thread;
+    use std::thread::{sleep, Thread};
+    use std::time::{Duration, Instant};
 
-    use crate::blocking_delay_queue::{BlockingDelayQueue, DelayQueue};
+    use crate::blocking_delay_queue::{BlockingDelayQueue};
     use crate::delay_item::DelayItem;
 
     #[test]
     fn should_put_() {
-        let q = BlockingDelayQueue::new_unbounded();
-
+        let q =  Arc::new(BlockingDelayQueue::new_unbounded());
         q.add(DelayItem {
-            data: "123",
-            delay: Instant::now(),
+            data: "111",
+            delay: Instant::now() + Duration::from_millis(3_000),
         });
+
+        let q_clone = q.clone();
+        thread::Builder::new()
+            .spawn(move || {
+                sleep(Duration::from_millis(500));
+                q_clone.add(DelayItem {
+                    data: "222",
+                    delay: Instant::now(),
+                });
+            }
+            );
+
+
+        let start = Instant::now();
+        println!("take from q");
+        let item = q.take();
+        let end = Instant::now() - start;
+        println!("{:?}", item);
+        println!("duration {:?}", end);
+
     }
 }

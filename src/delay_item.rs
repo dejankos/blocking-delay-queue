@@ -5,6 +5,7 @@ pub trait Delayed {
     fn delay(&self) -> Instant;
 }
 
+#[derive(Debug)]
 pub struct DelayItem<T> {
     pub data: T,
     pub delay: Instant,
