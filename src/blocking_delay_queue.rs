@@ -118,7 +118,7 @@ impl<T> BlockingDelayQueue<T>
             heap.peek()
                 .map_or(true, |item| {
                     println!("eval {}", item.0.delay() >= current_time);
-                    !(item.0.delay() >= current_time)
+                    item.0.delay() < current_time
                 } )
         };
 
