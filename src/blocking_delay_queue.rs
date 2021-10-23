@@ -1,6 +1,5 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-
 use std::fmt::Debug;
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -75,7 +74,7 @@ impl<T> BlockingDelayQueue<T>
             let cap = heap.capacity();
             let mut mutex = self
                 .condvar
-                .wait_timeout_while(heap, timeout, |h| h.len() >= cap)
+                .wait_timeout_while(heap, timeout, |heap| heap.len() >= cap)
                 .expect("Queue lock poisoned");
             if mutex.1.timed_out() {
                 false
@@ -88,7 +87,7 @@ impl<T> BlockingDelayQueue<T>
     }
 
     fn take(&self) -> T {
-       self.take_inner()
+        self.take_inner()
     }
 
     fn poll(&self, timeout: Duration) -> Option<T> {
@@ -126,9 +125,9 @@ impl<T> BlockingDelayQueue<T>
                 let delay = e.0.delay() - current_time;
 
                 // wait until head expires or new head wakes this thread
-                let e_opt = self.wait_with_timeout_for_element(heap, delay);
+                let opt = self.wait_with_timeout_for_element(heap, delay);
 
-                match e_opt {
+                match opt {
                     // should always be some
                     Some(e) => e,
                     // unreachable code but let's keep it in case Q.remove(e) is added
@@ -179,7 +178,6 @@ impl<T> BlockingDelayQueue<T>
 mod tests {
     use std::sync::Arc;
     use std::thread;
-    
     use std::time::{Duration, Instant};
 
     use crate::blocking_delay_queue::BlockingDelayQueue;
@@ -197,30 +195,36 @@ mod tests {
     }
 
     #[test]
-    fn should_put_() {
-        let q = Arc::new(BlockingDelayQueue::new_unbounded());
-        q.add(DelayItem {
-            data: "111",
-            delay: Instant::now() + Duration::from_millis(3_000),
-        });
+    fn should_put_and_take_delayed_items() {
+        let queue = BlockingDelayQueue::new_unbounded();
+        queue.add(DelayItem::new(1, Instant::now() + Duration::from_millis(10)));
+        queue.add(DelayItem::new(2, Instant::now()));
 
-        let q_clone = q.clone();
-        thread::Builder::new()
-            .spawn(move || {
-                thread::sleep(Duration::from_millis(200));
-                q_clone.add(DelayItem {
-                    data: "222",
-                    delay: Instant::now(),
-                });
-            }
-            );
+        assert_eq!(2, queue.take().data);
+        assert_eq!(1, queue.take().data);
+        assert_eq!(0, queue.size());
+    }
 
+    #[test]
+    fn should_block_until_item_is_available() {
+        let queue = Arc::new(BlockingDelayQueue::new_unbounded());
+        let queue_rc = queue.clone();
+        let handle = thread::spawn(move || queue_rc.take());
+        queue.add(DelayItem::new(1, Instant::now() + Duration::from_millis(50)));
+        let res = handle.join().unwrap().data;
+        assert_eq!(1, res);
+        assert_eq!(0, queue.size());
+    }
 
-        let start = Instant::now();
-        println!("take from q");
-        let item = q.take();
-        let end = Instant::now() - start;
-        println!("{:?}", item);
-        println!("duration {:?}", end);
+    #[test]
+    fn should_block_until_item_can_be_added() {
+        let queue = Arc::new(BlockingDelayQueue::new_with_capacity(1));
+        queue.add(DelayItem::new(1, Instant::now() + Duration::from_millis(50)));
+        let queue_rc = queue.clone();
+        let handle = thread::spawn(move || queue_rc.add(DelayItem::new(2, Instant::now())));
+        assert_eq!(1, queue.take().data);
+        handle.join().unwrap();
+        assert_eq!(1, queue.size());
+        assert_eq!(2, queue.take().data);
     }
 }
