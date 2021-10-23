@@ -1,6 +1,7 @@
-
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+
+use std::fmt::Debug;
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -16,7 +17,7 @@ pub struct BlockingDelayQueue<T>
 }
 
 impl<T> BlockingDelayQueue<T>
-    where T: Delayed + Ord
+    where T: Delayed + Ord + Debug
 {
     pub fn new_unbounded() -> Self {
         BlockingDelayQueue {
@@ -61,7 +62,6 @@ impl<T> BlockingDelayQueue<T>
             mutex.push(Reverse(e));
         }
 
-        println!("added element");
         self.condvar.notify_one()
     }
 
@@ -88,22 +88,22 @@ impl<T> BlockingDelayQueue<T>
     }
 
     fn take(&self) -> T {
-        let item = self.take_inner();
-        self.condvar.notify_one();
-
-        item
+       self.take_inner()
     }
 
-    fn poll(&self, _timeout: Duration) -> Option<T> {
-        todo!()
-    }
+    fn poll(&self, timeout: Duration) -> Option<T> {
+        let heap = self.heap_mutex();
 
-    fn remove(&self, _e: T) -> bool {
-        todo!()
+        if let Some(e) = self.wait_with_timeout_for_element(heap, timeout) {
+            self.condvar.notify_one();
+            Some(e)
+        } else {
+            None
+        }
     }
 
     fn size(&self) -> usize {
-        todo!()
+        self.heap_mutex().len()
     }
 
     fn clear(&self) {
@@ -111,43 +111,63 @@ impl<T> BlockingDelayQueue<T>
     }
 
     fn take_inner(&self) -> T {
+        self.wait_for_element()
+    }
+
+    fn wait_for_element(&self) -> T {
         let heap = self.heap_mutex();
-        let current_time = Instant::now();
-
-        let condition = |heap: &mut MinHeap<T>| {
-            heap.peek()
-                .map_or(true, |item| {
-                    println!("eval {}", item.0.delay() >= current_time);
-                    item.0.delay() < current_time
-                } )
-        };
-
-        if let Some(item) = heap.peek() {
-            if Self::is_expired(&item.0) {
-                Self::pop(heap)
+        if let Some(e) = heap.peek() {
+            let current_time = Instant::now();
+            if Self::is_expired(&e.0) {
+                // remove head
+                self.pop_and_notify(heap)
             } else {
-                let delay = item.0.delay() - current_time;
-                let (heap, cond) = self
-                // let heap = self
-                    .condvar
-                    .wait_timeout_while(heap, delay, condition)
-                    // .wait_while(heap, condition)
-                    .expect("Queue lock poisoned");
+                // delay until head expiration
+                let delay = e.0.delay() - current_time;
 
-                println!("wait timeout res = {:?}", cond.timed_out());
-                Self::pop(heap)
+                // wait until head expires or new head wakes this thread
+                let e_opt = self.wait_with_timeout_for_element(heap, delay);
+
+                match e_opt {
+                    // should always be some
+                    Some(e) => e,
+                    // unreachable code but let's keep it in case Q.remove(e) is added
+                    _ => self.wait_for_element()
+                }
             }
         } else {
+            // wait to be notified until condition is met
             let guard = self
                 .condvar
-                .wait_while(heap, condition)
-                .expect("Queue lock poisoned");
-            Self::pop(guard)
+                .wait_while(heap, Self::wait_condition())
+                .expect("Condvar lock poisoned");
+            self.pop_and_notify(guard)
         }
     }
 
-    fn pop(mut mutex: MutexGuard<MinHeap<T>>) -> T {
-        mutex.pop().unwrap().0
+    fn wait_with_timeout_for_element(&self, heap: MutexGuard<MinHeap<T>>, timeout: Duration) -> Option<T> {
+        let (heap, res) = self
+            .condvar
+            .wait_timeout_while(heap, timeout, Self::wait_condition())
+            .expect("Condvar lock poisoned");
+
+        match res.timed_out() {
+            true => None,
+            _ => Some(self.pop_and_notify(heap))
+        }
+    }
+
+    fn wait_condition() -> impl Fn(&mut MinHeap<T>) -> bool {
+        move |heap: &mut MinHeap<T>| {
+            heap.peek()
+                .map_or(true, |item| item.0.delay() > Instant::now())
+        }
+    }
+
+    fn pop_and_notify(&self, mut mutex: MutexGuard<MinHeap<T>>) -> T {
+        let e = mutex.pop().unwrap().0;
+        self.condvar.notify_one();
+        e
     }
 
     fn is_expired(e: &T) -> bool {
@@ -159,15 +179,26 @@ impl<T> BlockingDelayQueue<T>
 mod tests {
     use std::sync::Arc;
     use std::thread;
-    use std::thread::{sleep, Thread};
+    
     use std::time::{Duration, Instant};
 
-    use crate::blocking_delay_queue::{BlockingDelayQueue};
+    use crate::blocking_delay_queue::BlockingDelayQueue;
     use crate::delay_item::DelayItem;
 
     #[test]
+    fn should_put_and_take_ordered() {
+        let queue = BlockingDelayQueue::new_unbounded();
+        queue.add(DelayItem::new(1, Instant::now()));
+        queue.add(DelayItem::new(2, Instant::now()));
+
+        assert_eq!(1, queue.take().data);
+        assert_eq!(2, queue.take().data);
+        assert_eq!(0, queue.size());
+    }
+
+    #[test]
     fn should_put_() {
-        let q =  Arc::new(BlockingDelayQueue::new_unbounded());
+        let q = Arc::new(BlockingDelayQueue::new_unbounded());
         q.add(DelayItem {
             data: "111",
             delay: Instant::now() + Duration::from_millis(3_000),
@@ -176,7 +207,7 @@ mod tests {
         let q_clone = q.clone();
         thread::Builder::new()
             .spawn(move || {
-                sleep(Duration::from_millis(500));
+                thread::sleep(Duration::from_millis(200));
                 q_clone.add(DelayItem {
                     data: "222",
                     delay: Instant::now(),
@@ -191,6 +222,5 @@ mod tests {
         let end = Instant::now() - start;
         println!("{:?}", item);
         println!("duration {:?}", end);
-
     }
 }

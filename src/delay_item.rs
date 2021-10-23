@@ -32,7 +32,7 @@ impl<T> PartialEq for DelayItem<T> {
 impl<T> Eq for DelayItem<T> {}
 
 impl<T> DelayItem<T> {
-    fn new(data: T, delay: Instant) -> Self {
+    pub fn new(data: T, delay: Instant) -> Self {
         DelayItem {
             data,
             delay,
