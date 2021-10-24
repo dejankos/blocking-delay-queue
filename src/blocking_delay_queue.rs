@@ -1,13 +1,11 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::fmt::Debug;
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use crate::delay_item::Delayed;
 
 type MinHeap<T> = BinaryHeap<Reverse<T>>;
-
 
 pub struct BlockingDelayQueue<T>
 {
@@ -16,7 +14,7 @@ pub struct BlockingDelayQueue<T>
 }
 
 impl<T> BlockingDelayQueue<T>
-    where T: Delayed + Ord + Debug
+    where T: Delayed + Ord
 {
     pub fn new_unbounded() -> Self {
         BlockingDelayQueue {
@@ -36,19 +34,7 @@ impl<T> BlockingDelayQueue<T>
         }
     }
 
-    fn heap_mutex(&self) -> MutexGuard<'_, MinHeap<T>> {
-        self.heap.lock().expect("Queue lock poisoned")
-    }
-
-    fn can_accept_element(m: &MutexGuard<MinHeap<T>>) -> bool {
-        if m.capacity() == 0 {
-            true
-        } else {
-            m.len() < m.capacity()
-        }
-    }
-
-    fn add(&self, e: T) {
+    pub fn add(&self, e: T) {
         let mut heap = self.heap_mutex();
         if Self::can_accept_element(&heap) {
             heap.push(Reverse(e));
@@ -64,7 +50,7 @@ impl<T> BlockingDelayQueue<T>
         self.condvar.notify_one()
     }
 
-    fn offer(&self, e: T, timeout: Duration) -> bool {
+    pub fn offer(&self, e: T, timeout: Duration) -> bool {
         let mut heap = self.heap_mutex();
         if Self::can_accept_element(&heap) {
             heap.push(Reverse(e));
@@ -86,19 +72,15 @@ impl<T> BlockingDelayQueue<T>
         }
     }
 
-    fn take(&self) -> T {
-        self.take_inner()
+    pub fn take(&self) -> T {
+        match self.wait_for_element(Duration::ZERO) {
+            Some(e) => e,
+            _ => unreachable!()
+        }
     }
 
-    fn poll(&self, timeout: Duration) -> Option<T> {
-        let heap = self.heap_mutex();
-
-        if let Some(e) = self.wait_with_timeout_for_element(heap, timeout) {
-            self.condvar.notify_one();
-            Some(e)
-        } else {
-            None
-        }
+    pub fn poll(&self, timeout: Duration) -> Option<T> {
+        self.wait_for_element(timeout)
     }
 
     fn size(&self) -> usize {
@@ -109,42 +91,55 @@ impl<T> BlockingDelayQueue<T>
         self.heap_mutex().clear();
     }
 
-    fn take_inner(&self) -> T {
-        self.wait_for_element()
+    fn heap_mutex(&self) -> MutexGuard<'_, MinHeap<T>> {
+        self.heap.lock().expect("Queue lock poisoned")
     }
 
-    fn wait_for_element(&self) -> T {
+    fn wait_for_element(&self, timeout: Duration) -> Option<T> {
         let heap = self.heap_mutex();
         if let Some(e) = heap.peek() {
             let current_time = Instant::now();
             if Self::is_expired(&e.0) {
                 // remove head
-                self.pop_and_notify(heap)
+                Some(self.pop_and_notify(heap))
             } else {
-                // delay until head expiration
-                let delay = e.0.delay() - current_time;
+                let delay = match timeout {
+                    // delay until head expiration
+                    Duration::ZERO => e.0.delay() - current_time,
+                    // delay until timeout
+                    _ => timeout
+                };
 
-                // wait until head expires or new head wakes this thread
-                let opt = self.wait_with_timeout_for_element(heap, delay);
-
-                match opt {
-                    // should always be some
-                    Some(e) => e,
-                    // unreachable code but let's keep it in case Q.remove(e) is added
-                    _ => self.wait_for_element()
+                // wait until condition is satisfied respecting timeout (delay)
+                match self.wait_for_element_with_timeout(heap, delay) {
+                    // available element within timeout
+                    Some(e) => Some(e),
+                    _ => {
+                        match timeout {
+                            // unreachable code but let's keep it in case Q.remove(e) is added
+                            Duration::ZERO => self.wait_for_element(timeout),
+                            // when within timeout there is no available element
+                            _ => None
+                        }
+                    }
                 }
             }
         } else {
-            // wait to be notified until condition is met
-            let guard = self
-                .condvar
-                .wait_while(heap, Self::wait_condition())
-                .expect("Condvar lock poisoned");
-            self.pop_and_notify(guard)
+            match timeout {
+                Duration::ZERO => {
+                    let guard = self
+                        .condvar
+                        .wait_while(heap, Self::wait_condition())
+                        .expect("Condvar lock poisoned");
+
+                    Some(self.pop_and_notify(guard))
+                }
+                _ => self.wait_for_element_with_timeout(heap, timeout)
+            }
         }
     }
 
-    fn wait_with_timeout_for_element(&self, heap: MutexGuard<MinHeap<T>>, timeout: Duration) -> Option<T> {
+    fn wait_for_element_with_timeout(&self, heap: MutexGuard<MinHeap<T>>, timeout: Duration) -> Option<T> {
         let (heap, res) = self
             .condvar
             .wait_timeout_while(heap, timeout, Self::wait_condition())
@@ -156,17 +151,25 @@ impl<T> BlockingDelayQueue<T>
         }
     }
 
+    fn pop_and_notify(&self, mut mutex: MutexGuard<MinHeap<T>>) -> T {
+        let e = mutex.pop().unwrap().0;
+        self.condvar.notify_one();
+        e
+    }
+
+    fn can_accept_element(m: &MutexGuard<MinHeap<T>>) -> bool {
+        if m.capacity() == 0 {
+            true
+        } else {
+            m.len() < m.capacity()
+        }
+    }
+
     fn wait_condition() -> impl Fn(&mut MinHeap<T>) -> bool {
         move |heap: &mut MinHeap<T>| {
             heap.peek()
                 .map_or(true, |item| item.0.delay() > Instant::now())
         }
-    }
-
-    fn pop_and_notify(&self, mut mutex: MutexGuard<MinHeap<T>>) -> T {
-        let e = mutex.pop().unwrap().0;
-        self.condvar.notify_one();
-        e
     }
 
     fn is_expired(e: &T) -> bool {
@@ -176,12 +179,15 @@ impl<T> BlockingDelayQueue<T>
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Sub;
     use std::sync::Arc;
     use std::thread;
     use std::time::{Duration, Instant};
 
     use crate::blocking_delay_queue::BlockingDelayQueue;
     use crate::delay_item::DelayItem;
+
+    type MeasuredResult<T> = (T, Duration);
 
     #[test]
     fn should_put_and_take_ordered() {
@@ -206,12 +212,23 @@ mod tests {
     }
 
     #[test]
-    fn should_block_until_item_is_available() {
+    fn should_block_until_item_is_available_take() {
         let queue = Arc::new(BlockingDelayQueue::new_unbounded());
         let queue_rc = queue.clone();
         let handle = thread::spawn(move || queue_rc.take());
         queue.add(DelayItem::new(1, Instant::now() + Duration::from_millis(50)));
         let res = handle.join().unwrap().data;
+        assert_eq!(1, res);
+        assert_eq!(0, queue.size());
+    }
+
+    #[test]
+    fn should_block_until_item_is_available_poll() {
+        let queue = Arc::new(BlockingDelayQueue::new_unbounded());
+        let queue_rc = queue.clone();
+        let handle = thread::spawn(move || queue_rc.poll(Duration::from_millis(10)));
+        queue.add(DelayItem::new(1, Instant::now() + Duration::from_millis(5)));
+        let res = handle.join().unwrap().unwrap().data;
         assert_eq!(1, res);
         assert_eq!(0, queue.size());
     }
@@ -226,5 +243,37 @@ mod tests {
         handle.join().unwrap();
         assert_eq!(1, queue.size());
         assert_eq!(2, queue.take().data);
+    }
+
+    #[test]
+    fn should_timeout_if_element_cant_be_added() {
+        let queue = BlockingDelayQueue::new_with_capacity(1);
+        let accepted = queue.offer(DelayItem::new(1, Instant::now()), Duration::from_millis(5));
+        // fill capacity
+        assert!(accepted);
+
+        // q is full here should block until timeout without inserting
+        let timeout = Duration::from_millis(50);
+        let res = measure_time_millis(|| queue.offer(DelayItem::new(2, Instant::now()), timeout));
+        // element is not accepted - timeout occurred
+        assert!(!res.0);
+        // timeout is respected with some delta
+        assert!(res.1 >= timeout && res.1.sub(timeout) <= Duration::from_millis(10));
+
+        assert_eq!(1, queue.take().data);
+        assert_eq!(0, queue.size());
+    }
+
+    #[test]
+    fn should_timeout_if_element_cant_be_polled() {
+        let queue: BlockingDelayQueue<DelayItem<u8>> = BlockingDelayQueue::new_unbounded();
+        let e = queue.poll(Duration::from_millis(5));
+        assert_eq!(None, e);
+    }
+
+    fn measure_time_millis<T>(f: impl Fn() -> T) -> MeasuredResult<T> {
+        let now = Instant::now();
+        let t = f();
+        (t, now.elapsed())
     }
 }
