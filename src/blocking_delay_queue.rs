@@ -10,6 +10,7 @@ type MinHeap<T> = BinaryHeap<Reverse<T>>;
 pub struct BlockingDelayQueue<T> {
     heap: Mutex<MinHeap<T>>,
     condvar: Condvar,
+    capacity: usize,
 }
 
 impl<T> BlockingDelayQueue<T>
@@ -20,6 +21,7 @@ where
         BlockingDelayQueue {
             heap: Mutex::new(BinaryHeap::new()),
             condvar: Condvar::new(),
+            capacity: 0,
         }
     }
 
@@ -30,13 +32,14 @@ where
             BlockingDelayQueue {
                 heap: Mutex::new(BinaryHeap::with_capacity(capacity)),
                 condvar: Condvar::new(),
+                capacity,
             }
         }
     }
 
     pub fn add(&self, e: T) {
         let mut heap = self.heap_mutex();
-        if Self::can_accept_element(&heap) {
+        if self.can_accept_element(&heap) {
             heap.push(Reverse(e));
         } else {
             let cap = heap.capacity();
@@ -52,7 +55,7 @@ where
 
     pub fn offer(&self, e: T, timeout: Duration) -> bool {
         let mut heap = self.heap_mutex();
-        if Self::can_accept_element(&heap) {
+        if self.can_accept_element(&heap) {
             heap.push(Reverse(e));
             self.condvar.notify_one();
             true
@@ -161,8 +164,8 @@ where
         e
     }
 
-    fn can_accept_element(m: &MutexGuard<MinHeap<T>>) -> bool {
-        if m.capacity() == 0 {
+    fn can_accept_element(&self, m: &MutexGuard<MinHeap<T>>) -> bool {
+        if self.capacity == 0 {
             true
         } else {
             m.len() < m.capacity()
