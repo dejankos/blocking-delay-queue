@@ -33,14 +33,7 @@ impl<T> Eq for DelayItem<T> {}
 
 impl<T> DelayItem<T> {
     pub fn new(data: T, delay: Instant) -> Self {
-        DelayItem {
-            data,
-            delay,
-        }
-    }
-
-    fn is_expired(&self) -> bool {
-        self.delay <= Instant::now()
+        DelayItem { data, delay }
     }
 }
 

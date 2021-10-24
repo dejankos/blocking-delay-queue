@@ -1,10 +1,5 @@
-mod delay_item;
 mod blocking_delay_queue;
+mod delay_item;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub use blocking_delay_queue::BlockingDelayQueue;
+pub use delay_item::{DelayItem, Delayed};

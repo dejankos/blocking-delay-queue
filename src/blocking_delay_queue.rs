@@ -7,14 +7,14 @@ use crate::delay_item::Delayed;
 
 type MinHeap<T> = BinaryHeap<Reverse<T>>;
 
-pub struct BlockingDelayQueue<T>
-{
+pub struct BlockingDelayQueue<T> {
     heap: Mutex<MinHeap<T>>,
     condvar: Condvar,
 }
 
 impl<T> BlockingDelayQueue<T>
-    where T: Delayed + Ord
+where
+    T: Delayed + Ord,
 {
     pub fn new_unbounded() -> Self {
         BlockingDelayQueue {
@@ -75,7 +75,7 @@ impl<T> BlockingDelayQueue<T>
     pub fn take(&self) -> T {
         match self.wait_for_element(Duration::ZERO) {
             Some(e) => e,
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -83,11 +83,11 @@ impl<T> BlockingDelayQueue<T>
         self.wait_for_element(timeout)
     }
 
-    fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.heap_mutex().len()
     }
 
-    fn clear(&self) {
+    pub fn clear(&self) {
         self.heap_mutex().clear();
     }
 
@@ -107,7 +107,7 @@ impl<T> BlockingDelayQueue<T>
                     // delay until head expiration
                     Duration::ZERO => e.0.delay() - current_time,
                     // delay until timeout
-                    _ => timeout
+                    _ => timeout,
                 };
 
                 // wait until condition is satisfied respecting timeout (delay)
@@ -119,7 +119,7 @@ impl<T> BlockingDelayQueue<T>
                             // unreachable code but let's keep it in case Q.remove(e) is added
                             Duration::ZERO => self.wait_for_element(timeout),
                             // when within timeout there is no available element
-                            _ => None
+                            _ => None,
                         }
                     }
                 }
@@ -134,12 +134,16 @@ impl<T> BlockingDelayQueue<T>
 
                     Some(self.pop_and_notify(guard))
                 }
-                _ => self.wait_for_element_with_timeout(heap, timeout)
+                _ => self.wait_for_element_with_timeout(heap, timeout),
             }
         }
     }
 
-    fn wait_for_element_with_timeout(&self, heap: MutexGuard<MinHeap<T>>, timeout: Duration) -> Option<T> {
+    fn wait_for_element_with_timeout(
+        &self,
+        heap: MutexGuard<MinHeap<T>>,
+        timeout: Duration,
+    ) -> Option<T> {
         let (heap, res) = self
             .condvar
             .wait_timeout_while(heap, timeout, Self::wait_condition())
@@ -147,7 +151,7 @@ impl<T> BlockingDelayQueue<T>
 
         match res.timed_out() {
             true => None,
-            _ => Some(self.pop_and_notify(heap))
+            _ => Some(self.pop_and_notify(heap)),
         }
     }
 
@@ -203,7 +207,10 @@ mod tests {
     #[test]
     fn should_put_and_take_delayed_items() {
         let queue = BlockingDelayQueue::new_unbounded();
-        queue.add(DelayItem::new(1, Instant::now() + Duration::from_millis(10)));
+        queue.add(DelayItem::new(
+            1,
+            Instant::now() + Duration::from_millis(10),
+        ));
         queue.add(DelayItem::new(2, Instant::now()));
 
         assert_eq!(2, queue.take().data);
@@ -216,7 +223,10 @@ mod tests {
         let queue = Arc::new(BlockingDelayQueue::new_unbounded());
         let queue_rc = queue.clone();
         let handle = thread::spawn(move || queue_rc.take());
-        queue.add(DelayItem::new(1, Instant::now() + Duration::from_millis(50)));
+        queue.add(DelayItem::new(
+            1,
+            Instant::now() + Duration::from_millis(50),
+        ));
         let res = handle.join().unwrap().data;
         assert_eq!(1, res);
         assert_eq!(0, queue.size());
@@ -236,7 +246,10 @@ mod tests {
     #[test]
     fn should_block_until_item_can_be_added() {
         let queue = Arc::new(BlockingDelayQueue::new_with_capacity(1));
-        queue.add(DelayItem::new(1, Instant::now() + Duration::from_millis(50)));
+        queue.add(DelayItem::new(
+            1,
+            Instant::now() + Duration::from_millis(50),
+        ));
         let queue_rc = queue.clone();
         let handle = thread::spawn(move || queue_rc.add(DelayItem::new(2, Instant::now())));
         assert_eq!(1, queue.take().data);
@@ -269,6 +282,16 @@ mod tests {
         let queue: BlockingDelayQueue<DelayItem<u8>> = BlockingDelayQueue::new_unbounded();
         let e = queue.poll(Duration::from_millis(5));
         assert_eq!(None, e);
+    }
+
+    #[test]
+    fn should_clear_queue() {
+        let queue = BlockingDelayQueue::new_unbounded();
+        queue.add(DelayItem::new(1, Instant::now()));
+        queue.add(DelayItem::new(2, Instant::now()));
+        queue.clear();
+
+        assert_eq!(0, queue.size());
     }
 
     fn measure_time_millis<T>(f: impl Fn() -> T) -> MeasuredResult<T> {
