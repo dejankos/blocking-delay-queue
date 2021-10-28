@@ -1,6 +1,9 @@
 # Blocking delay queue
 
-A thread safe blocking delay queue.
+A thread safe blocking delay queue (bounded/unbounded) in which an element can only be taken when its delay has expired.  
+Supports adding and removing expired items by blocking until operation can be performed (```add```/```take```) or by waiting util timeout (```offer```/```poll```).
+
+
 
 ## Example
 ```rust
@@ -23,6 +26,9 @@ let queue = BlockingDelayQueue::new_with_capacity(16);
     // poll element - removes the head of this queue, waiting until an element is available or the specified wait time expires
     let poll = queue.poll(Duration::from_secs(1));
 
+    // Removes all data from queue
+    queue.clear();
+    
     println!("Offering element status {}", success);
     println!("First element data {}", take.data);
     println!("Second element data {}", poll.unwrap().data);
@@ -30,6 +36,11 @@ let queue = BlockingDelayQueue::new_with_capacity(16);
 }
 ```
 ## Benchmark
+Run benchmark:
+```bash 
+cargo bench
+```
+Criterion will create html reports under target dir.
 
 
 ## License

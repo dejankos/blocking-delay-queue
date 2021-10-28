@@ -17,6 +17,9 @@ fn main() {
     // poll element - removes the head of this queue, waiting until an element is available or the specified wait time expires
     let poll = queue.poll(Duration::from_secs(1));
 
+    // Removes all data from queue
+    queue.clear();
+
     println!("Offering element status {}", success);
     println!("First element data {}", take.data);
     println!("Second element data {}", poll.unwrap().data);
