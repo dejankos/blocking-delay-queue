@@ -1,3 +1,5 @@
+[![Build Status](https://app.travis-ci.com/dejankos/blocking-delay-queue.svg?branch=main)](https://app.travis-ci.com/dejankos/blocking-delay-queue)  
+
 # Blocking delay queue
 
 A thread safe blocking delay queue (bounded/unbounded) in which an element can only be taken when its delay has expired.  
