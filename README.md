@@ -4,7 +4,6 @@ A thread safe blocking delay queue (bounded/unbounded) in which an element can o
 Supports adding and removing expired items by blocking until operation can be performed (```add```/```take```) or by waiting util timeout (```offer```/```poll```).
 
 
-
 ## Example
 ```rust
 use std::time::{Duration, Instant};
@@ -35,6 +34,7 @@ let queue = BlockingDelayQueue::new_with_capacity(16);
     println!("Queue size {}", queue.size());
 }
 ```
+  
 ## Benchmark
 Run benchmark:
 ```bash 
@@ -45,4 +45,4 @@ Criterion will create html reports under target dir.
 
 ## License
 
-blocking-delay-queue is licensed under the [MIT License](https://opensource.org/licenses/MIT)
+Blocking delay queue is licensed under the [MIT License](https://opensource.org/licenses/MIT)

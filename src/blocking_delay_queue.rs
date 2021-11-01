@@ -7,6 +7,21 @@ use crate::delay_item::Delayed;
 
 type MinHeap<T> = BinaryHeap<Reverse<T>>;
 
+/// A blocking queue of [Delayed](delay_item::Delayed) elements in which an element can only be
+/// taken when its delay has expired.
+/// Supports adding and removing expired items by blocking until operation can be performed (['add'] / ['take'])
+/// or by waiting util timeout (['offer'] / ['poll']).
+///
+/// #Examples
+/// Basic usage:
+/// ```
+/// use std::time::Instant;
+/// use blocking_delay_queue::{BlockingDelayQueue, DelayItem};
+/// let bounded_q = BlockingDelayQueue::new_with_capacity(16);
+/// bounded_q.add(DelayItem::new(123, Instant::now()));
+/// let item = bounded_q.take();
+/// println!("{}", item.data);
+/// ```
 pub struct BlockingDelayQueue<T> {
     heap: Mutex<MinHeap<T>>,
     condvar: Condvar,
@@ -14,9 +29,17 @@ pub struct BlockingDelayQueue<T> {
 }
 
 impl<T> BlockingDelayQueue<T>
-where
-    T: Delayed + Ord,
+    where
+        T: Delayed + Ord,
 {
+    /// Creates a new unbounded blocking delay queue.
+    ///
+    /// #Examples
+    /// Basic usage:
+    /// ```
+    /// use blocking_delay_queue::{BlockingDelayQueue, DelayItem};
+    /// let  queue = BlockingDelayQueue::<DelayItem<&str>>::new_unbounded();
+    /// ```
     pub fn new_unbounded() -> Self {
         BlockingDelayQueue {
             heap: Mutex::new(BinaryHeap::new()),
@@ -25,6 +48,21 @@ where
         }
     }
 
+    /// Creates a new bounded blocking delay queue with provided capacity where '0' is treated
+    /// as unbounded.
+    ///
+    /// #Examples
+    /// Basic usage:
+    /// ```
+    /// use blocking_delay_queue::{BlockingDelayQueue, DelayItem};
+    /// let  queue = BlockingDelayQueue::<DelayItem<&str>>::new_with_capacity(4);
+    /// ```
+    ///
+    /// When capacity is zero queue will be unbounded:
+    /// ```
+    /// use blocking_delay_queue::{BlockingDelayQueue, DelayItem};
+    /// let  queue = BlockingDelayQueue::<DelayItem<&str>>::new_with_capacity(0);
+    /// ```
     pub fn new_with_capacity(capacity: usize) -> Self {
         if capacity == 0 {
             Self::new_unbounded()
@@ -37,6 +75,16 @@ where
         }
     }
 
+    /// Adds an element to this queue waiting if necessary until space becomes available.
+    ///
+    /// #Examples
+    /// Basic usage:
+    /// ```
+    /// use std::time::Instant;
+    /// use blocking_delay_queue::{BlockingDelayQueue, DelayItem};
+    /// let  queue = BlockingDelayQueue::new_with_capacity(1);
+    /// queue.add(DelayItem::new(123, Instant::now()));
+    /// ```
     pub fn add(&self, e: T) {
         let mut heap = self.heap_mutex();
         if self.can_accept_element(&heap) {
@@ -53,6 +101,17 @@ where
         self.condvar.notify_one()
     }
 
+    /// Adds an element to this queue waiting up to the specified wait time if necessary for space to become available.
+    /// Returns 'true' if insertion was successful within specified wait time 'false' otherwise.
+    ///
+    /// #Examples
+    /// Basic usage:
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use blocking_delay_queue::{BlockingDelayQueue, DelayItem};
+    /// let  queue = BlockingDelayQueue::new_with_capacity(1);
+    /// queue.offer(DelayItem::new(123, Instant::now()), Duration::from_millis(5));
+    /// ```
     pub fn offer(&self, e: T, timeout: Duration) -> bool {
         let mut heap = self.heap_mutex();
         if self.can_accept_element(&heap) {
@@ -75,6 +134,18 @@ where
         }
     }
 
+    /// Retrieves and removes the head of this queue, waiting if necessary until an element with an expired delay is available on this queue.
+    ///
+    /// #Examples
+    /// Basic usage:
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use blocking_delay_queue::{BlockingDelayQueue, DelayItem};
+    /// let  queue = BlockingDelayQueue::new_with_capacity(1);
+    /// queue.add(DelayItem::new(123, Instant::now()));
+    /// let item = queue.take();
+    /// println!("{}", item.data);
+    /// ```
     pub fn take(&self) -> T {
         match self.wait_for_element(Duration::ZERO) {
             Some(e) => e,
@@ -82,14 +153,48 @@ where
         }
     }
 
+    /// Retrieves and removes the head of this queue, waiting if necessary until an element with an expired delay is available on this queue, or the specified wait time expires.
+    /// Returns [None](core::option::Option::None) if no element is available within the specified wait time.
+    ///
+    /// #Examples
+    /// Basic usage:
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use blocking_delay_queue::{BlockingDelayQueue, DelayItem};
+    /// let  queue = BlockingDelayQueue::new_with_capacity(1);
+    /// queue.add(DelayItem::new(123, Instant::now()));
+    /// let polled = queue.poll(Duration::from_secs(1));
+    /// assert!(polled.is_some());
+    /// println!("{}", polled.unwrap().data);
+    /// ```
     pub fn poll(&self, timeout: Duration) -> Option<T> {
         self.wait_for_element(timeout)
     }
 
+    /// Returns the number of elements in this queue.
+    ///
+    /// #Examples
+    /// Basic usage:
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use blocking_delay_queue::{BlockingDelayQueue, DelayItem};
+    /// let  queue = BlockingDelayQueue::<DelayItem<&str>>::new_with_capacity(1);
+    /// println!("{}", queue.size());
+    /// ```
     pub fn size(&self) -> usize {
         self.heap_mutex().len()
     }
 
+    /// Removes all of the elements from this queue.
+    ///
+    /// #Examples
+    /// Basic usage:
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use blocking_delay_queue::{BlockingDelayQueue, DelayItem};
+    /// let  queue = BlockingDelayQueue::<DelayItem<&str>>::new_with_capacity(1);
+    /// queue.clear();
+    /// ```
     pub fn clear(&self) {
         self.heap_mutex().clear();
     }
@@ -284,7 +389,7 @@ mod tests {
     fn should_timeout_if_element_cant_be_polled() {
         let queue: BlockingDelayQueue<DelayItem<u8>> = BlockingDelayQueue::new_unbounded();
         let e = queue.poll(Duration::from_millis(5));
-        assert_eq!(None, e);
+        assert!(e.is_none());
     }
 
     #[test]
