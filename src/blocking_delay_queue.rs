@@ -29,8 +29,8 @@ pub struct BlockingDelayQueue<T> {
 }
 
 impl<T> BlockingDelayQueue<T>
-    where
-        T: Delayed + Ord,
+where
+    T: Delayed + Ord,
 {
     /// Creates a new unbounded blocking delay queue.
     ///

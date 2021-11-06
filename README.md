@@ -13,9 +13,9 @@ use std::time::{Duration, Instant};
 use blocking_delay_queue::{BlockingDelayQueue, DelayItem};
 
 fn main() {
-// bounded queue
-let queue = BlockingDelayQueue::new_with_capacity(16);
-// there is also an unbounded impl -> BlockingDelayQueue::new_unbounded()
+    // bounded queue
+    let queue = BlockingDelayQueue::new_with_capacity(16);
+    // there is also an unbounded impl -> BlockingDelayQueue::new_unbounded()
 
     // add element - blocks until item can be added respecting queue capacity
     queue.add(DelayItem::new(123, Instant::now()));
@@ -44,6 +44,20 @@ cargo bench
 ```
 Criterion will create html reports under target dir.
 
+## Build from source
+### Install Rust
+```bash
+$ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+Update to latest stable version
+```bash
+$ rustup update
+```
+
+### Build
+```bash
+$ cargo build
+```
 
 ## License
 
