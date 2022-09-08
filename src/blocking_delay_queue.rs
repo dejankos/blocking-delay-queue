@@ -196,7 +196,9 @@ where
     /// queue.clear();
     /// ```
     pub fn clear(&self) {
-        self.heap_mutex().clear();
+        let mut heap = self.heap_mutex();
+        heap.clear();
+        self.condvar.notify_all();
     }
 
     fn heap_mutex(&self) -> MutexGuard<'_, MinHeap<T>> {
