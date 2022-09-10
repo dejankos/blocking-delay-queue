@@ -437,7 +437,7 @@ mod tests {
         thread::sleep(Duration::from_secs(1));
         // Clear queue to release thread
         queue.clear();
-        // Park main thread until the thread releases it or after a timeut of 1 sec
+        // Park main thread until the thread releases it or after a timeout of 1 sec
         thread::park_timeout(Duration::from_secs(1));
         thread::sleep(Duration::from_millis(50));
         // Check if the thread returned
