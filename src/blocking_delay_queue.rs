@@ -196,8 +196,7 @@ where
     /// queue.clear();
     /// ```
     pub fn clear(&self) {
-        let mut heap = self.heap_mutex();
-        heap.clear();
+        self.heap_mutex().clear();
         self.condvar.notify_all();
     }
 
