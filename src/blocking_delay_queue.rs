@@ -197,6 +197,7 @@ where
     /// ```
     pub fn clear(&self) {
         self.heap_mutex().clear();
+        self.condvar.notify_all();
     }
 
     fn heap_mutex(&self) -> MutexGuard<'_, MinHeap<T>> {
@@ -292,7 +293,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::ops::Sub;
-    use std::sync::Arc;
+    use std::sync::{Arc, Condvar, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -400,6 +401,47 @@ mod tests {
         queue.clear();
 
         assert_eq!(0, queue.size());
+    }
+
+    #[test]
+    fn should_exit_add_on_clear_queue() {
+        let queue = Arc::new(BlockingDelayQueue::new_with_capacity(1));
+        queue.add(DelayItem::new(1, Instant::now()));
+
+        let pair = Arc::new((Mutex::new(false), Condvar::new()));
+        let pair2 = Arc::clone(&pair);
+        // Spawn thread to block in the add function
+        let main_thread = thread::current();
+        let thread_queue = queue.clone();
+        let handler = thread::spawn(move || {
+            {
+                let (lock, cvar) = &*pair2;
+                let mut started = lock.lock().unwrap();
+                *started = true;
+                // Notify the condvar that the value has changed
+                cvar.notify_one();
+                // Close block to unlock the mutex and release the main thread
+            }
+            // Try to add another value, which should block the queue
+            thread_queue.add(DelayItem::new(2, Instant::now()));
+            main_thread.unpark();
+        });
+        // Wait for the thread to start up
+        let (lock, cvar) = &*pair;
+        let mut started = lock.lock().unwrap();
+        while !*started {
+            started = cvar.wait(started).unwrap();
+        }
+        // Sleep to ensure thread is in add() function
+        thread::sleep(Duration::from_secs(1));
+        // Clear queue to release thread
+        queue.clear();
+        // Park main thread until the thread releases it or after a timeout of 1 sec
+        thread::park_timeout(Duration::from_secs(1));
+        thread::sleep(Duration::from_millis(50));
+        // Check if the thread returned
+        assert_eq!(true, handler.is_finished());
+        handler.join().expect("failed to join thread");
     }
 
     fn measure_time_millis<T>(f: impl Fn() -> T) -> MeasuredResult<T> {
